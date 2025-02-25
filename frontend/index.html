@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RTSP Stream Viewer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .video-container {
+            margin-top: 20px;
+            text-align: center;
+        }
+        #videoElement {
+            max-width: 100%;
+            border: 1px solid #ddd;
+        }
+        .status {
+            margin-top: 10px;
+            color: #666;
+        }
+        .error {
+            color: #d9534f;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RTSP Stream Viewer</h1>
+        <div class="form-group">
+            <label for="rtspUrl">RTSP URL:</label>
+            <input type="text" id="rtspUrl" placeholder="rtsp://username:password@ip:port/path" />
+        </div>
+        <button id="startButton">Start Streaming</button>
+        <button id="stopButton" disabled>Stop Streaming</button>
+        
+        <div class="video-container">
+            <img id="videoElement" alt="RTSP Stream" style="display: none;" />
+            <div id="status" class="status">No active stream</div>
+            <div id="fps" style="display: none;">FPS: 0</div>
+        </div>
+    </div>
+
+    <script>
+        let streamId = null;
+        let websocket = null;
+        
+        document.getElementById('startButton').addEventListener('click', () => {
+            const rtspUrl = document.getElementById('rtspUrl').value.trim();
+            if (!rtspUrl) {
+                showError('Please enter a valid RTSP URL');
+                return;
+            }
+            
+            document.getElementById('startButton').disabled = true;
+            document.getElementById('stopButton').disabled = false;
+            
+            startStream(rtspUrl);
+        });
+        
+        document.getElementById('stopButton').addEventListener('click', () => {
+            stopStream();
+        });
+        
+        async function startStream(rtspUrl) {
+            try {
+                const response = await fetch('/streams', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ rtsp_url: rtspUrl })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to start stream');
+                }
+                
+                const data = await response.json();
+                streamId = data.stream_id;
+                
+                connectWebSocket(streamId);
+                
+                document.getElementById('status').textContent = 'Connecting to stream...';
+                document.getElementById('videoElement').style.display = 'block';
+            } catch (error) {
+                showError(`Error: ${error.message}`);
+                resetUI();
+            }
+        }
+        
+        function connectWebSocket(streamId) {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.close();
+            }
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            websocket = new WebSocket(`${protocol}//${window.location.host}/ws/${streamId}`);
+            
+            websocket.onopen = () => {
+                document.getElementById('status').textContent = 'Connected to stream';
+            };
+            
+            websocket.onmessage = (event) => {
+                const videoElement = document.getElementById('videoElement');
+                
+                if (event.data instanceof Blob) {
+                    const url = URL.createObjectURL(event.data);
+                    videoElement.onload = () => URL.revokeObjectURL(url);
+                    videoElement.src = url;
+                } else if (event.data.startsWith('fps:')) {
+                    const fps = event.data.split(':')[1];
+                    document.getElementById('fps').textContent = `FPS: ${fps}`;
+                    document.getElementById('fps').style.display = 'block';
+                }
+            };
+            
+            websocket.onclose = () => {
+                document.getElementById('status').textContent = 'Connection closed';
+                resetUI();
+            };
+            
+            websocket.onerror = (error) => {
+                showError('WebSocket error');
+                resetUI();
+            };
+        }
+        
+        function stopStream() {
+            if (streamId) {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.close();
+                }
+                
+                fetch(`/streams/${streamId}`, {
+                    method: 'DELETE'
+                }).catch(error => console.error('Error stopping stream:', error));
+                
+                streamId = null;
+            }
+            
+            resetUI();
+        }
+        
+        function resetUI() {
+            document.getElementById('startButton').disabled = false;
+            document.getElementById('stopButton').disabled = true;
+            document.getElementById('videoElement').style.display = 'none';
+            document.getElementById('status').textContent = 'No active stream';
+            document.getElementById('fps').style.display = 'none';
+        }
+        
+        function showError(message) {
+            const statusElement = document.getElementById('status');
+            statusElement.textContent = message;
+            statusElement.className = 'status error';
+        }
+    </script>
+</body>
+</html>
