@@ -141,7 +141,7 @@ class RTSPStream:
 
 @app.get("/", response_class=HTMLResponse)
 async def get_index():
-    with open('frontend/index.html', 'r') as file:
+    with open('../frontend/index.html', 'r') as file:
         return file.read()
 
 @app.post("/streams")
